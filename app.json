@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "KeyStrike",
+    "slug": "keystrike",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "keystrike",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.mobcomp.keystrike",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.mobcomp.keystrike",
+      "adaptiveIcon": {
+        "backgroundColor": "#080b25"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9dd3d61d-ef2b-4961-97d0-ea37d93964c0"
+      }
+    }
+  }
+}
