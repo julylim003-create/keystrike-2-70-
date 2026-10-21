@@ -287,7 +287,7 @@ function TowerDefense({ onNavigate }) {
                       <Image
                         source={NOTE_IMAGES[mob.note[0]]}
                         resizeMode="contain"
-                        style={{ width: noteSize, height: noteSize * 0.72, marginBottom: 4, tintColor: '#fff' }}
+                        style={{ width: noteSize, height: noteSize * 0.72, marginBottom: 4 }}
                         accessibilityLabel={`${mob.note} note`}
                       />
                       <Image source={MONSTERS[mob.monster]} resizeMode="contain" style={{ width: monsterSize, height: monsterSize }} />

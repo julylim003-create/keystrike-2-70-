@@ -1,5 +1,6 @@
+
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Image, Modal, Pressable, Text, View } from 'react-native';
 import { recordGameResult, recordGuestGameResult } from '../achievements';
 import { auth } from '../firebase';
 import AccountSavePrompt from './AccountSavePrompt';
@@ -18,40 +19,26 @@ const QUESTIONS = [
   { note: 'D5', answer: 'D', options: ['B', 'D', 'F'] },
 ];
 
-const NOTE_POSITIONS = {
-  C4: 5,
-  D4: 4.5,
-  E4: 4,
-  F4: 3.5,
-  G4: 3,
-  A4: 2.5,
-  B4: 2,
-  C5: 1.5,
-  D5: 1,
+const NOTE_IMAGES = {
+  C4: require('../../public/note/C4.png'),
+  D4: require('../../public/note/D4.png'),
+  E4: require('../../public/note/E4.png'),
+  F4: require('../../public/note/F4.png'),
+  G4: require('../../public/note/G4.png'),
+  A4: require('../../public/note/A1.png'),
+  B4: require('../../public/note/B.png'),
+  C5: require('../../public/note/C5.png'),
+  D5: require('../../public/note/D5.png'),
 };
 
 function StaffCard({ note }) {
-  const y = (NOTE_POSITIONS[note] || 3) * 25;
   return (
     <View style={{ width: '100%', minHeight: 220, backgroundColor: '#d8d8d8', borderRadius: 8, overflow: 'hidden' }}>
-      {[35, 60, 85, 110, 135].map((top) => (
-        <View key={top} style={{ position: 'absolute', left: '8%', right: '8%', top, height: 2, backgroundColor: '#15182a' }} />
-      ))}
-      <Text style={{ position: 'absolute', left: 18, top: 36, fontSize: 80, lineHeight: 100, color: '#15182a' }}>𝄞</Text>
-      <View style={{
-        position: 'absolute',
-        left: '61%',
-        top: y,
-        width: 19,
-        height: 13,
-        borderRadius: 10,
-        backgroundColor: '#15182a',
-        transform: [{ rotate: '-20deg' }],
-      }} />
-      <View style={{ position: 'absolute', left: '66%', top: y - 38, height: 40, width: 2, backgroundColor: '#15182a' }} />
-      {note === 'C4' && (
-        <View style={{ position: 'absolute', left: '57%', top: y + 5, width: 37, height: 2, backgroundColor: '#15182a' }} />
-      )}
+      <Image
+        source={NOTE_IMAGES[note]}
+        resizeMode="contain"
+        style={{ width: 700, height: 220, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' }}
+      />
     </View>
   );
 }
