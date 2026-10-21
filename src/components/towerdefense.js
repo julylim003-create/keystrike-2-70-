@@ -26,14 +26,43 @@ const POOFS = [
   require('../../public/assets/poof3.gif'),
 ];
 const BACKGROUND = require('../../public/bg.jpg');
+
+const IMG_C = require('../../public/tdnotes/C4.png');
+const IMG_CS = require('../../public/tdnotes/C#.png');
+const IMG_D = require('../../public/tdnotes/D4.png');
+const IMG_DS = require('../../public/tdnotes/D#.png');
+const IMG_E = require('../../public/tdnotes/E4.png');
+const IMG_F = require('../../public/tdnotes/F4.png');
+const IMG_FS = require('../../public/tdnotes/F#.png');
+const IMG_G = require('../../public/tdnotes/G4.png');
+const IMG_GS = require('../../public/tdnotes/G#.png');
+const IMG_A = require('../../public/tdnotes/A1.png');
+const IMG_AS = require('../../public/tdnotes/A#.png');
+const IMG_B = require('../../public/tdnotes/B.png');
+
+// Every spelling in NOTES is listed, so flats and enharmonics get the right image.
 const NOTE_IMAGES = {
-  A: require('../../public/note/A1.png'),
-  B: require('../../public/note/B.png'),
-  C: require('../../public/note/C4.png'),
-  D: require('../../public/note/D4.png'),
-  E: require('../../public/note/E4.png'),
-  F: require('../../public/note/F4.png'),
-  G: require('../../public/note/G4.png'),
+  C: IMG_C,
+  'C#': IMG_CS,
+  Db: IMG_CS,
+  D: IMG_D,
+  'D#': IMG_DS,
+  Eb: IMG_DS,
+  E: IMG_E,
+  'E#': IMG_F,
+  Fb: IMG_E,
+  F: IMG_F,
+  'F#': IMG_FS,
+  Gb: IMG_FS,
+  G: IMG_G,
+  'G#': IMG_GS,
+  Ab: IMG_GS,
+  A: IMG_A,
+  'A#': IMG_AS,
+  Bb: IMG_AS,
+  B: IMG_B,
+  'B#': IMG_C,
+  Cb: IMG_B,
 };
 const MAX_HP = 100;
 const SPAWN_DELAY = 1500;
@@ -131,8 +160,8 @@ function TowerDefense({ onNavigate }) {
   const defeated = game.hp <= 0;
   const keyboardHeight = Math.max(100, Math.min(160, height * 0.18));
   const sharpHeight = keyboardHeight * 0.62;
-  const monsterSize = Math.min(84, Math.max(72, width * 0.2));
-  const noteSize = Math.min(64, Math.max(52, width * 3.15));
+  const monsterSize = Math.min(104, Math.max(72, width * 0.2));
+  const noteSize = Math.min(104, Math.max(102, width * 3.15));
   const currentTarget = game.mobs.find((mob) => !mob.defeated);
   const keyboardTarget = currentTarget
     ? KEYBOARD_NOTES[NOTE_PITCH[currentTarget.note]]
@@ -284,12 +313,28 @@ function TowerDefense({ onNavigate }) {
                     <Image source={POOFS[mob.poof]} resizeMode="contain" style={{ width: monsterSize, height: monsterSize }} />
                   ) : (
                     <>
-                      <Image
-                        source={NOTE_IMAGES[mob.note[0]]}
-                        resizeMode="contain"
-                        style={{ width: noteSize, height: noteSize * 0.72, marginBottom: 4 }}
-                        accessibilityLabel={`${mob.note} note`}
-                      />
+                      <View style={{ width: noteSize, height: noteSize * 0.72, marginBottom: -30 }}>
+                        <Image
+                          source={NOTE_IMAGES[mob.note]}
+                          resizeMode="contain"
+                          blurRadius={7}
+                          style={{
+                            position: 'absolute',
+                            left: 2,
+                            top: 1,
+                            width: noteSize,
+                            height: noteSize * 0.72,
+                            tintColor: '#000',
+                            opacity: 0.5,
+                          }}
+                        />
+                        <Image
+                          source={NOTE_IMAGES[mob.note]}
+                          resizeMode="contain"
+                          style={{ width: noteSize, height: noteSize * 0.72 }}
+                          accessibilityLabel={`${mob.note} note`}
+                        />
+                      </View>
                       <Image source={MONSTERS[mob.monster]} resizeMode="contain" style={{ width: monsterSize, height: monsterSize }} />
                     </>
                   )}
