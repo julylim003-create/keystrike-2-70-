@@ -1,34 +1,45 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Image, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { recordGameResult, recordGuestGameResult } from '../achievements';
 import { auth } from '../firebase';
 import AccountSavePrompt from './AccountSavePrompt';
 import Keyboard from './Keyboard';
 import { Page, styles } from './native';
+import { useAudioPlayer } from 'expo-audio';
 
 const SONGS = [
   {
+    pic: require('../../public/coverpic/twinkle.png'),
     title: 'Twinkle Twinkle Little Star',
+    bio: 'A classic nursery rhyme that has been sung for generations.',
     bpm: 100,
     notes: 'C C G G A A G:2 F F E E D D C:2 G G F F E E D:2 G G F F E E D:2 C C G G A A G:2 F F E E D D C:2',
   },
   {
+    pic: require('../../public/coverpic/odetojoy.png'),
     title: 'Ode to Joy',
+    bio: 'A famous piece by Ludwig van Beethoven.',
     bpm: 100,
     notes: 'E E F G G F E D C C D E E D D:2 E E F G G F E D C C D E D C C:2',
   },
   {
+    pic: require('../../public/coverpic/marylamb.png'),
     title: 'Mary Had a Little Lamb',
+    bio: 'A traditional folk song about a little lamb.',
     bpm: 100,
     notes: 'E D C D E E E:2 D D D:2 E G G:2 E D C D E E E E D D E D C:4',
   },
   {
+    pic: require('../../public/coverpic/hotbuns.png'),
     title: 'Hot Cross Buns',
+    bio: 'A traditional folk song.',
     bpm: 100,
     notes: 'E D C:2 E D C:2 C C C C D D D D E D C:2',
   },
   {
+    pic: require('../../public/coverpic/frerejacques.png'),
     title: 'Frere Jacques',
+    bio: 'A traditional French song.',
     bpm: 100,
     notes: 'C D E C C D E C E F G:2 E F G:2 G A G F E C G A G F E C C G C:2 C G C:2',
   },
@@ -41,9 +52,66 @@ const TRAVEL_SECONDS = 3.7;
 const NOTE_ANIMATION_SECONDS = 5;
 const HIT_TOLERANCE = 0.38;
 const LEAD_IN = 1;
+const COUNTDOWN_START = 3;
 const NOTE_STAFF = require('../../public/assets/pmannotes.png');
 const PIANO_LOGO = require('../../public/assets/logo.png');
-const PAUSE_ICON = require('../../public/assets/settings.png');
+const PAUSE_ICON = require('../../public/assets/newsettings.png');
+const BACK_ICON = require('../../public/assets/back.png');
+const AnimatedPressableBase = Animated.createAnimatedComponent(Pressable);
+const ButtonSoundContext = createContext(null);
+
+// Navy palette (panels use #001248)
+const NAVY = '#001248';
+const NAVY_DEEP = '#000a30';
+const NAVY_MID = '#0a2a7a';
+const NAVY_RAISED = '#0b1f66';
+const ACCENT = '#7fa8ff';
+const ACCENT_SOFT = 'rgba(127,168,255,0.22)';
+const ACCENT_LINE = 'rgba(127,168,255,0.55)';
+
+
+function AnimatedPressable({ children, onPress, onPressIn, onPressOut, style, pressScale = 1.2, ...props }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const [pressed, setPressed] = useState(false);
+  const playButtonSound = useContext(ButtonSoundContext);
+
+  const animateScale = (toValue) => {
+    Animated.spring(scale, {
+      toValue,
+      useNativeDriver: true,
+      speed: 20,
+      bounciness: 5,
+    }).start();
+  };
+
+  const resolvedStyle = typeof style === 'function' ? style({ pressed }) : style;
+  const existingTransforms = resolvedStyle?.transform || [];
+
+  return (
+    <AnimatedPressableBase
+      {...props}
+      onPressIn={(event) => {
+        setPressed(true);
+        animateScale(pressScale);
+        onPressIn?.(event);
+      }}
+      onPressOut={(event) => {
+        setPressed(false);
+        animateScale(1);
+        onPressOut?.(event);
+      }}
+      onPress={(event) => {
+        playButtonSound?.();
+        onPress?.(event);
+      }}
+      style={[resolvedStyle, { transform: [...existingTransforms, { scale }] }]}
+    >
+      {children}
+    </AnimatedPressableBase>
+  );
+}
+
+
 function buildMelody(song, difficulty) {
   const beat = 60 / (song.bpm * TEMPO[difficulty]);
   let time = 0;
@@ -58,169 +126,609 @@ function buildMelody(song, difficulty) {
 
 const DIFFICULTY_LABELS = { easy: 'Easy', normal: 'Medium', hard: 'Hard' };
 const DIFFICULTY_COLORS = { easy: '#00c96b', normal: '#ffd83d', hard: '#ff3030' };
+const DIFFICULTY_NOTES = {
+  easy: 'Slower notes, more time to hit them',
+  normal: 'The song at its original speed',
+  hard: 'Faster notes, less time to react',
+};
+const DIFFICULTY_BARS = { easy: 1, normal: 2, hard: 3 };
+const JUDGEMENTS = [
+  { key: 'great', label: 'Great', color: '#00c96b' },
+  { key: 'ok', label: 'OK', color: ACCENT },
+  { key: 'meh', label: 'Meh', color: '#ffd83d' },
+  { key: 'miss', label: 'Miss', color: '#ff3030' },
+];
 
-function PianoManSetup({ songs, difficulty, setDifficulty, selected, setSelected, onStart, width }) {
-  const [tab, setTab] = useState('difficulty');
+// Fades and slides its children in; used to stagger the rows and cards.
+function Entrance({ delay = 0, children, style }) {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.timing(anim, {
+      toValue: 1,
+      duration: 320,
+      delay,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [anim, delay]);
 
   return (
-    <View style={{
-      position: 'absolute',
-      zIndex: 20,
-      alignSelf: 'center',
-      top: '50%',
-      width: Math.min(330, width - 24),
-      minHeight: 480,
-      maxHeight: '94%',
-      borderRadius: 10,
-      overflow: 'hidden',
-      backgroundColor: 'rgb(15, 5, 95)',
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.18)',
-      transform: [{ translateY: -240 }],
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 15 },
-      shadowOpacity: 0.4,
-      shadowRadius: 20,
-      elevation: 18,
-    }}>
-      <View style={{ flexDirection: 'row', width: '100%' }}>
-        {[
-          { key: 'difficulty', label: 'Difficulty' },
-          { key: 'songs', label: 'Songs' },
-        ].map(({ key, label }) => (
-          <Pressable
-            key={key}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === key }}
-            onPress={() => setTab(key)}
-            style={{
-              flex: 1,
-              minHeight: 55,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderBottomWidth: 3,
-              borderBottomColor: tab === key ? '#fff' : 'transparent',
-              backgroundColor: tab === key ? 'rgb(28, 12, 115)' : 'rgb(9, 3, 62)',
-            }}
-          >
-            <Text style={{ color: tab === key ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 17 }}>
-              {label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: anim,
+          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+        },
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
 
-      {tab === 'difficulty' ? (
-        <View style={{ paddingHorizontal: 20, paddingTop: 28, paddingBottom: 10, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontSize: 32, fontWeight: '400', marginBottom: 28 }}>
-            Difficulty
-          </Text>
-          {DIFFICULTIES.map((level) => (
-            <Pressable
-              key={level}
-              accessibilityRole="button"
-              accessibilityState={{ selected: difficulty === level }}
-              onPress={() => setDifficulty(level)}
-              style={({ pressed }) => ({
-                width: 145,
-                height: 62,
-                marginBottom: 28,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 10,
-                backgroundColor: DIFFICULTY_COLORS[level],
-                borderWidth: difficulty === level ? 4 : 0,
-                borderColor: '#fff',
-                opacity: pressed ? 0.85 : 1,
-                transform: [{ scale: pressed ? 1.03 : 1 }],
-              })}
-            >
-              <Text style={{ color: '#fff', fontSize: 32 }}>{DIFFICULTY_LABELS[level]}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : (
-        <View style={{ paddingHorizontal: 20, paddingTop: 28, paddingBottom: 4, flex: 1 }}>
-          <Text style={{ color: '#fff', fontSize: 32, fontWeight: '400', textAlign: 'center', marginBottom: 28 }}>
-            Songs
-          </Text>
-          <ScrollView style={{ maxHeight: 275 }} contentContainerStyle={{ paddingRight: 3 }}>
-            {songs.map((entry) => (
-              <Pressable
-                key={entry.title}
-                accessibilityRole="button"
-                accessibilityState={{ selected: selected === entry.title }}
-                onPress={() => setSelected(entry.title)}
-                style={({ pressed }) => ({
-                  width: '100%',
-                  minHeight: 48,
-                  paddingVertical: 10,
-                  paddingHorizontal: 13,
-                  marginBottom: 10,
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.3)',
-                  borderRadius: 8,
-                  backgroundColor: selected === entry.title ? '#fff' : 'rgba(255,255,255,0.08)',
-                  justifyContent: 'center',
-                  opacity: pressed ? 0.85 : 1,
-                })}
-              >
-                <Text style={{
-                  color: selected === entry.title ? 'rgb(15,5,95)' : '#fff',
-                  fontSize: 15,
-                  fontWeight: selected === entry.title ? '700' : '400',
-                }}>
-                  {entry.title}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+function DifficultyBars({ count, color }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 24 }}>
+      {[10, 17, 24].map((barHeight, i) => (
+        <View
+          key={barHeight}
+          style={{
+            width: 7,
+            height: barHeight,
+            marginRight: i < 2 ? 3 : 0,
+            borderRadius: 3,
+            backgroundColor: count > i ? color : 'rgba(255,255,255,0.2)',
+          }}
+        />
+      ))}
+    </View>
+  );
+}
 
-      <View style={{
-        marginHorizontal: 20,
-        marginTop: 5,
-        marginBottom: 14,
-        padding: 10,
-        borderRadius: 8,
-        backgroundColor: 'rgba(0,0,0,0.25)',
-      }}>
-        <Text style={{ color: '#fff', fontSize: 13, lineHeight: 21 }}>
-          Song: <Text style={{ fontWeight: '700' }}>{selected || 'None selected'}</Text>
-        </Text>
-        <Text style={{ color: '#fff', fontSize: 13, lineHeight: 21 }}>
-          Difficulty: <Text style={{ fontWeight: '700' }}>{DIFFICULTY_LABELS[difficulty]}</Text>
-        </Text>
-      </View>
+function PianoManSetup({ songs, difficulty, setDifficulty, selected, setSelected, onStart, onBack, width, height }) {
+  const [tab, setTab] = useState('songs');
+  const panelAnim = useRef(new Animated.Value(0)).current;
+  const contentAnim = useRef(new Animated.Value(0)).current;
+  const advanceTimer = useRef(null);
 
-      <Pressable
+  const selectedSong = songs.find((entry) => entry.title === selected) || null;
+
+  useEffect(() => {
+    const animation = Animated.spring(panelAnim, { toValue: 1, speed: 14, bounciness: 6, useNativeDriver: true });
+    animation.start();
+    return () => animation.stop();
+  }, [panelAnim]);
+
+  useEffect(() => {
+    contentAnim.setValue(0);
+    const animation = Animated.timing(contentAnim, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [tab, contentAnim]);
+
+  useEffect(() => () => clearTimeout(advanceTimer.current), []);
+
+  const chooseSong = (title) => {
+    setSelected(title);
+    clearTimeout(advanceTimer.current);
+    advanceTimer.current = setTimeout(() => setTab('difficulty'), 220);
+  };
+
+  const chooseDifficulty = (level) => {
+    setDifficulty(level);
+    clearTimeout(advanceTimer.current);
+    advanceTimer.current = setTimeout(() => onStart(), 260);
+  };
+
+  const tabs = selectedSong
+    ? [{ key: 'songs', label: 'Songs' }, { key: 'difficulty', label: 'Difficulty' }]
+    : [{ key: 'songs', label: 'Songs' }];
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <AnimatedPressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: !selected }}
-        disabled={!selected}
-        onPress={onStart}
+        accessibilityLabel="Back to main menu"
+        pressScale={0.9}
+        onPress={onBack}
         style={({ pressed }) => ({
-          height: 50,
-          marginHorizontal: 20,
-          marginBottom: 20,
-          borderRadius: 10,
-          backgroundColor: '#fff',
+          position: 'absolute',
+          top: 12,
+          left: 12,
+          zIndex: 30,
+          width: 44,
+          height: 44,
+          borderRadius: 22,
           alignItems: 'center',
           justifyContent: 'center',
-          opacity: !selected ? 0.4 : pressed ? 0.86 : 1,
+          borderWidth: 1,
+          borderColor: ACCENT_LINE,
+          backgroundColor: pressed ? 'rgba(255,255,255,0.18)' : 'rgba(0,18,72,0.9)',
         })}
       >
-        <Text style={{ color: 'rgb(15,5,95)', fontSize: 18, fontWeight: '700' }}>Start Game</Text>
-      </Pressable>
+        <Image source={BACK_ICON} resizeMode="contain" style={{ width: 24, height: 24 }} />
+      </AnimatedPressable>
+
+      <Animated.View style={{
+        width: Math.min(330, width - 24),
+        height: Math.min(540, height - 110),
+        borderRadius: 20,
+        overflow: 'hidden',
+        backgroundColor: NAVY,
+        borderWidth: 1,
+        borderColor: ACCENT_LINE,
+        opacity: panelAnim,
+        transform: [{ scale: panelAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }],
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 15 },
+        shadowOpacity: 0.4,
+        shadowRadius: 20,
+        elevation: 18,
+      }}>
+        <View style={{ flexDirection: 'row', width: '100%' }}>
+          {tabs.map(({ key, label }) => (
+            <AnimatedPressable
+              key={key}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === key }}
+              onPress={() => setTab(key)}
+              style={{
+                flex: 1,
+                minHeight: 55,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderBottomWidth: 3,
+                borderBottomColor: tab === key ? ACCENT : 'transparent',
+                backgroundColor: tab === key ? NAVY_MID : NAVY_DEEP,
+              }}
+            >
+              <Text style={{ color: tab === key ? '#fff' : 'rgba(255,255,255,0.7)', fontSize: 17 }}>
+                {label}
+              </Text>
+            </AnimatedPressable>
+          ))}
+        </View>
+
+        <Animated.View style={{
+          flex: 1,
+          opacity: contentAnim,
+          transform: [{ translateY: contentAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+        }}>
+          {tab === 'songs' || !selectedSong ? (
+            <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 18 }}>
+              <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700', marginBottom: 14, marginLeft: 2 }}>
+                Choose a song
+              </Text>
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 16 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {songs.map((entry, index) => {
+                  const isSelected = selected === entry.title;
+                  return (
+                    <Entrance key={entry.title} delay={index * 60}>
+                      <AnimatedPressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        pressScale={0.97}
+                        onPress={() => chooseSong(entry.title)}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          padding: 10,
+                          marginBottom: 10,
+                          borderRadius: 14,
+                          borderWidth: isSelected ? 2 : 1,
+                          borderColor: isSelected ? ACCENT : 'rgba(255,255,255,0.14)',
+                          backgroundColor: isSelected ? ACCENT_SOFT : 'rgba(255,255,255,0.05)',
+                          opacity: pressed ? 0.9 : 1,
+                        })}
+                      >
+                        <Image
+                          source={entry.pic}
+                          resizeMode="cover"
+                          style={{ width: 54, height: 54, borderRadius: 10, marginRight: 12, backgroundColor: NAVY_RAISED }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+                            {entry.title}
+                          </Text>
+                          <Text numberOfLines={2} style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 3 }}>
+                            {entry.bio}
+                          </Text>
+                        </View>
+                      </AnimatedPressable>
+                    </Entrance>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : (
+            <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                <AnimatedPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to songs"
+                  pressScale={0.9}
+                  onPress={() => setTab('songs')}
+                  style={({ pressed }) => ({
+                    width: 44,
+                    height: 44,
+                    marginRight: 8,
+                    borderRadius: 22,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)',
+                  })}
+                >
+                  <Image source={BACK_ICON} resizeMode="contain" style={{ width: 24, height: 24 }} />
+                </AnimatedPressable>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700' }}>Choose difficulty</Text>
+              </View>
+
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 16 }}
+                showsVerticalScrollIndicator={false}
+              >
+                <Entrance>
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    padding: 10,
+                    marginBottom: 16,
+                    borderRadius: 14,
+                    backgroundColor: NAVY_DEEP,
+                    borderWidth: 1,
+                    borderColor: ACCENT_SOFT,
+                  }}>
+                    <Image
+                      source={selectedSong.pic}
+                      resizeMode="cover"
+                      style={{ width: 44, height: 44, borderRadius: 8, marginRight: 12, backgroundColor: NAVY_RAISED }}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1} style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                        {selectedSong.title}
+                      </Text>
+                    </View>
+                  </View>
+                </Entrance>
+
+                {DIFFICULTIES.map((level, index) => {
+                  const isCurrent = difficulty === level;
+                  const color = DIFFICULTY_COLORS[level];
+                  return (
+                    <Entrance key={level} delay={80 + index * 70}>
+                      <AnimatedPressable
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isCurrent }}
+                        pressScale={0.96}
+                        onPress={() => chooseDifficulty(level)}
+                        style={({ pressed }) => ({
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          minHeight: 76,
+                          marginBottom: 12,
+                          paddingVertical: 12,
+                          paddingRight: 14,
+                          borderRadius: 14,
+                          overflow: 'hidden',
+                          borderWidth: isCurrent ? 2 : 1,
+                          borderColor: isCurrent ? color : 'rgba(255,255,255,0.14)',
+                          backgroundColor: isCurrent ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                          opacity: pressed ? 0.9 : 1,
+                        })}
+                      >
+                        <View style={{ width: 6, alignSelf: 'stretch', marginRight: 14, marginVertical: -12, backgroundColor: color }} />
+                        <View style={{ width: 40, alignItems: 'center', marginRight: 12 }}>
+                          <DifficultyBars count={DIFFICULTY_BARS[level]} color={color} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: '#fff', fontSize: 19, fontWeight: '700' }}>
+                            {DIFFICULTY_LABELS[level]}
+                          </Text>
+                          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 3 }}>
+                            {Math.round(selectedSong.bpm * TEMPO[level])} BPM · {DIFFICULTY_NOTES[level]}
+                          </Text>
+                        </View>
+                        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 26, marginLeft: 8 }}>›</Text>
+                      </AnimatedPressable>
+                    </Entrance>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+        </Animated.View>
+      </Animated.View>
     </View>
+  );
+}
+
+function Countdown({ value, title, label, color }) {
+  // Play the countdown audio once when the countdown screen first appears.
+  const countdownPlayer = useAudioPlayer(require('../../public/appsfx/countdown.mp3'));
+  const scale = useRef(new Animated.Value(1.8)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const ring = useRef(new Animated.Value(0)).current;
+  const intro = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    try {
+      countdownPlayer.seekTo(0);
+      countdownPlayer.play();
+    } catch (soundError) {
+      console.warn('Could not play countdown sound:', soundError);
+    }
+  }, [countdownPlayer]);
+
+  useEffect(() => {
+    const animation = Animated.timing(intro, { toValue: 1, duration: 300, useNativeDriver: true });
+    animation.start();
+    return () => animation.stop();
+  }, [intro]);
+
+  useEffect(() => {
+    scale.setValue(1.8);
+    opacity.setValue(0);
+    ring.setValue(0);
+
+    const animation = Animated.parallel([
+      Animated.spring(scale, { toValue: 1, speed: 14, bounciness: 8, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+        Animated.delay(560),
+        Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]),
+      Animated.timing(ring, { toValue: 1, duration: 950, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]);
+
+    animation.start();
+    return () => animation.stop();
+  }, [value, scale, opacity, ring]);
+
+  return (
+    <Animated.View
+      accessibilityLiveRegion="polite"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgb(1,1,58)',
+        opacity: intro,
+      }}
+    >
+      <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 20, fontWeight: '600', marginBottom: 28 }}>
+        Get ready
+      </Text>
+      <View style={{ width: 200, height: 200, alignItems: 'center', justifyContent: 'center' }}>
+        <Animated.View
+          style={{
+            position: 'absolute',
+            width: 170,
+            height: 170,
+            borderRadius: 85,
+            borderWidth: 4,
+            borderColor: color,
+            opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] }),
+            transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.4] }) }],
+          }}
+        />
+        <Animated.Text
+          style={{
+            color: '#fff',
+            fontSize: 120,
+            fontWeight: '800',
+            opacity,
+            transform: [{ scale }],
+          }}
+        >
+          {value}
+        </Animated.Text>
+      </View>
+      <Text numberOfLines={1} style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 28, paddingHorizontal: 24 }}>
+        {title}
+      </Text>
+      <Text style={{ color, fontSize: 15, fontWeight: '700', marginTop: 6 }}>{label}</Text>
+    </Animated.View>
+  );
+}
+
+function ResultsOverlay({ results, accuracy, maxCombo, stats, width, onRetry, onMenu }) {
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const cardScale = useRef(new Animated.Value(0.94)).current;
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardTranslateY = useRef(new Animated.Value(16)).current;
+  const scoreScale = useRef(new Animated.Value(0.6)).current;
+
+  // Card zoom & fade-in, then the score pops in.
+  useEffect(() => {
+    overlayOpacity.setValue(0);
+    cardScale.setValue(0.94);
+    cardOpacity.setValue(0);
+    cardTranslateY.setValue(16);
+    scoreScale.setValue(0.6);
+
+    const animation = Animated.parallel([
+      Animated.timing(overlayOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.spring(cardScale, { toValue: 1, speed: 18, bounciness: 4, useNativeDriver: true }),
+      Animated.timing(cardOpacity, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(cardTranslateY, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.sequence([
+        Animated.delay(220),
+        Animated.spring(scoreScale, { toValue: 1, speed: 14, bounciness: 10, useNativeDriver: true }),
+      ]),
+    ]);
+
+    animation.start();
+    return () => animation.stop();
+  }, [overlayOpacity, cardScale, cardOpacity, cardTranslateY, scoreScale]);
+
+  const summary = [
+    { label: 'Accuracy', value: `${accuracy}%`, color: '#fff' },
+    { label: 'Max combo', value: `${maxCombo}`, color: '#fff' },
+    { label: 'Difficulty', value: DIFFICULTY_LABELS[results.difficulty], color: DIFFICULTY_COLORS[results.difficulty] },
+  ];
+
+  return (
+    <Animated.View style={{
+      position: 'absolute',
+      zIndex: 23,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+      backgroundColor: 'rgba(0,0,0,0.76)',
+      opacity: overlayOpacity,
+    }}>
+      <Animated.View style={{
+        width: Math.min(340, width - 48),
+        padding: 22,
+        borderWidth: 1,
+        borderColor: ACCENT_LINE,
+        borderRadius: 20,
+        backgroundColor: NAVY,
+        alignItems: 'stretch',
+        shadowColor: '#3d6bff',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 18,
+        elevation: 10,
+        opacity: cardOpacity,
+        transform: [{ translateY: cardTranslateY }, { scale: cardScale }],
+      }}>
+        <Entrance delay={80}>
+          <Text style={{ color: '#fff', fontFamily: 'Georgia', fontSize: 26, fontWeight: '700', textAlign: 'center' }}>
+            Song Complete
+          </Text>
+          <Text numberOfLines={1} style={{ color: ACCENT, textAlign: 'center', marginTop: 6, fontSize: 14 }}>
+            {results.title}
+          </Text>
+        </Entrance>
+
+        <Entrance delay={160}>
+          <View style={{ alignItems: 'center', marginTop: 14, marginBottom: 16 }}>
+            <Animated.Text style={{ color: '#ffd35b', fontSize: 44, fontWeight: '800', transform: [{ scale: scoreScale }] }}>
+              {results.score}
+            </Animated.Text>
+            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, marginTop: -2 }}>points</Text>
+          </View>
+        </Entrance>
+
+        <Entrance delay={240}>
+          <View style={{ flexDirection: 'row', marginHorizontal: -4 }}>
+            {summary.map(({ label, value, color }) => (
+              <View
+                key={label}
+                style={{
+                  flex: 1,
+                  marginHorizontal: 4,
+                  paddingVertical: 10,
+                  alignItems: 'center',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.12)',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                }}
+              >
+                <Text style={{ color, fontSize: 17, fontWeight: '800' }}>{value}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 2 }}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        </Entrance>
+
+        <Entrance delay={320}>
+          <View style={{ flexDirection: 'row', marginHorizontal: -3, marginTop: 10 }}>
+            {JUDGEMENTS.map(({ key, label, color }) => (
+              <View
+                key={key}
+                style={{
+                  flex: 1,
+                  marginHorizontal: 3,
+                  paddingVertical: 8,
+                  alignItems: 'center',
+                  borderRadius: 10,
+                  borderTopWidth: 3,
+                  borderTopColor: color,
+                  backgroundColor: NAVY_DEEP,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{stats[key]}</Text>
+                <Text style={{ color, fontSize: 11, marginTop: 1 }}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        </Entrance>
+
+        <Entrance delay={400}>
+          <AnimatedPressable
+            accessibilityRole="button"
+            onPress={onRetry}
+            style={{ minHeight: 44, marginTop: 18, borderRadius: 12, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ color: NAVY, fontWeight: '800' }}>Retry</Text>
+          </AnimatedPressable>
+          <AnimatedPressable
+            accessibilityRole="button"
+            onPress={onMenu}
+            style={{ minHeight: 44, marginTop: 8, borderRadius: 12, borderWidth: 1, borderColor: ACCENT_LINE, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Return to menu</Text>
+          </AnimatedPressable>
+        </Entrance>
+      </Animated.View>
+    </Animated.View>
   );
 }
 
 function PianoMan({ onNavigate }) {
   const { width, height } = useWindowDimensions();
+  // One shared player serves every UI button on this screen.
+  const buttonSoundPlayer = useAudioPlayer(require('../../public/appsfx/mainsfx.mp3'));
+  const playButtonSound = () => {
+    try {
+      buttonSoundPlayer.seekTo(0);
+      buttonSoundPlayer.play();
+    } catch (soundError) {
+      console.warn('Could not play button sound:', soundError);
+    }
+  };
   const [selectedSong, setSelectedSong] = useState(null);
   const [difficulty, setDifficulty] = useState('normal');
   const [gameStarted, setGameStarted] = useState(false);
+  const [countdown, setCountdown] = useState(null);
   const [song, setSong] = useState([]);
   const [elapsed, setElapsed] = useState(0);
   const [score, setScore] = useState(0);
@@ -241,6 +749,20 @@ function PianoMan({ onNavigate }) {
   const resultSaved = useRef(false);
   const statsRef = useRef({ great: 0, ok: 0, meh: 0, miss: 0 });
   const comboRef = useRef({ current: 0, max: 0 });
+  const boardShake = useRef(new Animated.Value(0)).current;
+
+  // Shakes the note board left and right when a note is missed.
+  const shakeBoard = () => {
+    boardShake.stopAnimation();
+    boardShake.setValue(0);
+    Animated.sequence([
+      Animated.timing(boardShake, { toValue: -6, duration: 40, useNativeDriver: true }),
+      Animated.timing(boardShake, { toValue: 6, duration: 40, useNativeDriver: true }),
+      Animated.timing(boardShake, { toValue: -4, duration: 40, useNativeDriver: true }),
+      Animated.timing(boardShake, { toValue: 4, duration: 40, useNativeDriver: true }),
+      Animated.spring(boardShake, { toValue: 0, speed: 24, bounciness: 3, useNativeDriver: true }),
+    ]).start();
+  };
 
   useEffect(() => {
     if (!playing || paused || !song.length) return undefined;
@@ -261,6 +783,7 @@ function PianoMan({ onNavigate }) {
         setJudgementStats({ ...statsRef.current });
         setCombo(0);
         setFeedback('MISS!');
+        shakeBoard();
       }
       const songEnd = song[song.length - 1].delay + NOTE_ANIMATION_SECONDS;
       if (currentElapsed > songEnd) {
@@ -328,6 +851,20 @@ function PianoMan({ onNavigate }) {
     setPlaying(true);
   };
 
+  // 3 → 2 → 1 → game starts
+  useEffect(() => {
+    if (countdown === null) return undefined;
+    const timer = setTimeout(() => {
+      if (countdown > 1) {
+        setCountdown(countdown - 1);
+      } else {
+        setCountdown(null);
+        startSong(selectedSong, difficulty);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
   const togglePause = () => {
     if (!playing && !paused) return;
     if (!paused) {
@@ -375,6 +912,7 @@ function PianoMan({ onNavigate }) {
     setPlaying(false);
     setPaused(false);
     setGameStarted(false);
+    setCountdown(null);
     setResults(null);
     setSong([]);
     setElapsed(0);
@@ -391,6 +929,7 @@ function PianoMan({ onNavigate }) {
     : 0;
 
   return (
+    <ButtonSoundContext.Provider value={playButtonSound}>
     <Page
       scroll={false}
       style={{ paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, justifyContent: 'flex-start' }}
@@ -398,20 +937,31 @@ function PianoMan({ onNavigate }) {
     >
       <View style={{ flex: 1, width: '100%', overflow: 'hidden', backgroundColor: 'rgb(1,1,58)' }}>
         {!gameStarted ? (
-          <PianoManSetup
-            songs={SONGS}
-            difficulty={difficulty}
-            setDifficulty={setDifficulty}
-            selected={selectedSong?.title || ''}
-            setSelected={(title) => setSelectedSong(SONGS.find((entry) => entry.title === title) || null)}
-            onStart={() => {
-              if (selectedSong) startSong(selectedSong, difficulty);
-            }}
-            width={width}
-          />
+          countdown !== null ? (
+            <Countdown
+              value={countdown}
+              title={selectedSong?.title || ''}
+              label={DIFFICULTY_LABELS[difficulty]}
+              color={DIFFICULTY_COLORS[difficulty]}
+            />
+          ) : (
+            <PianoManSetup
+              songs={SONGS}
+              difficulty={difficulty}
+              setDifficulty={setDifficulty}
+              selected={selectedSong?.title || ''}
+              setSelected={(title) => setSelectedSong(SONGS.find((entry) => entry.title === title) || null)}
+              onStart={() => {
+                if (selectedSong) setCountdown(COUNTDOWN_START);
+              }}
+              onBack={() => onNavigate('minigame')}
+              width={width}
+              height={height}
+            />
+          )
         ) : (
           <>
-            <Pressable
+            <AnimatedPressable
               accessibilityRole="button"
               accessibilityLabel={paused ? 'Resume game' : 'Pause game'}
               disabled={!selectedSong}
@@ -421,63 +971,82 @@ function PianoMan({ onNavigate }) {
                 top: 12,
                 right: 12,
                 zIndex: 25,
-                width: 80,
-                height: 80,
+                width: 52,
+                height: 52,
                 opacity: !selectedSong ? 0.55 : pressed ? 0.8 : 1,
               })}
             >
               <Image source={PAUSE_ICON} resizeMode="contain" style={{ width: '100%', height: '100%' }} />
-            </Pressable>
+            </AnimatedPressable>
 
-            <View style={{
-              position: 'absolute',
-              top: 30,
-              alignSelf: 'center',
-              width: 300,
-              borderBottomWidth: 3,
-              borderBottomColor: 'yellow',
-            }} />
-            <Text style={{
-              position: 'absolute',
-              top: 50,
-              alignSelf: 'center',
-              zIndex: 10,
-              color: '#fff',
-              fontSize: 19,
-              fontWeight: '700',
-            }}>
-              Score: {score} | {feedback}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={changeSelection}
-              style={({ pressed }) => ({
+            <View
+              pointerEvents="box-none"
+              style={{
                 position: 'absolute',
-                zIndex: 12,
-                top: 90,
-                alignSelf: 'center',
-                paddingVertical: 7,
-                paddingHorizontal: 14,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.7)',
-                borderRadius: 16,
-                backgroundColor: pressed ? 'rgba(255,255,255,0.14)' : 'rgba(1,1,58,0.9)',
-              })}
+                top: 0,
+                left: 0,
+                right: 0,
+                zIndex: 10,
+                paddingTop: 12,
+                paddingHorizontal: 12,
+              }}
             >
-              <Text style={{ color: '#fff', fontSize: 12 }}>Change Song / Difficulty</Text>
-            </Pressable>
-            <Text style={{
-              position: 'absolute',
-              top: 130,
-              zIndex: 10,
-              alignSelf: 'center',
-              color: 'rgba(255,255,255,0.8)',
-              fontSize: 13,
-            }}>
-              {selectedSong?.title} · {DIFFICULTY_LABELS[difficulty]}{combo > 1 ? ` · ${combo} combo` : ''}
-            </Text>
+              <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <AnimatedPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Change song or difficulty"
+                  pressScale={0.95}
+                  onPress={changeSelection}
+                  style={({ pressed }) => ({
+                    width: 96,
+                    minHeight: 44,
+                    paddingVertical: 6,
+                    paddingHorizontal: 8,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1,
+                    borderColor: ACCENT_LINE,
+                    borderRadius: 14,
+                    backgroundColor: pressed ? 'rgba(127,168,255,0.2)' : 'rgba(0,18,72,0.9)',
+                  })}
+                >
+                  <Text style={{ color: '#fff', fontSize: 11, textAlign: 'center' }}>Change Song / Difficulty</Text>
+                </AnimatedPressable>
 
-            <View style={{
+                <View style={{
+                  flex: 1,
+                  marginHorizontal: 8,
+                  paddingVertical: 5,
+                  paddingHorizontal: 10,
+                  alignItems: 'center',
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.18)',
+                  backgroundColor: 'rgba(0,18,72,0.85)',
+                }}>
+                  <Text style={{ color: '#ffd35b', fontSize: 20, fontWeight: '800', lineHeight: 24 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600' }}>Score </Text>
+                    {score}
+                  </Text>
+                  <Text numberOfLines={1} style={{ color: '#fff', fontSize: 12, fontWeight: '600', lineHeight: 16 }}>
+                    {feedback || ' '}
+                  </Text>
+                </View>
+
+                <View style={{ width: 52 }} />
+              </View>
+
+              <Text numberOfLines={1} style={{
+                textAlign: 'center',
+                marginTop: 8,
+                color: 'rgba(255,255,255,0.8)',
+                fontSize: 12,
+              }}>
+                {selectedSong?.title} · {DIFFICULTY_LABELS[difficulty]}{combo > 1 ? ` · ${combo} combo` : ''}
+              </Text>
+            </View>
+
+            <Animated.View style={{
               position: 'absolute',
               zIndex: 2,
               top: '50%',
@@ -494,7 +1063,7 @@ function PianoMan({ onNavigate }) {
               shadowOpacity: 0.5,
               shadowRadius: 20,
               elevation: 5,
-              transform: [{ translateY: -240 }],
+              transform: [{ translateY: -240 }, { translateX: boardShake }],
             }}>
               <Image
                 source={NOTE_STAFF}
@@ -531,7 +1100,7 @@ function PianoMan({ onNavigate }) {
                   }} />
                 );
               })}
-            </View>
+            </Animated.View>
 
             <Image
               source={PIANO_LOGO}
@@ -592,9 +1161,9 @@ function PianoMan({ onNavigate }) {
               width: Math.min(300, width - 48),
               padding: 24,
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.4)',
-              borderRadius: 8,
-              backgroundColor: '#091849',
+              borderColor: ACCENT_LINE,
+              borderRadius: 18,
+              backgroundColor: NAVY,
               alignItems: 'stretch',
               shadowColor: '#000',
               shadowOpacity: 0.5,
@@ -609,7 +1178,7 @@ function PianoMan({ onNavigate }) {
                 { label: 'Retry', action: restart },
                 { label: 'Return to menu', action: () => onNavigate('minigame') },
               ].map(({ label, action, highlighted }) => (
-                <Pressable
+                <AnimatedPressable
                   key={label}
                   accessibilityRole="button"
                   onPress={action}
@@ -618,79 +1187,38 @@ function PianoMan({ onNavigate }) {
                     marginTop: 10,
                     paddingHorizontal: 14,
                     borderWidth: 1,
-                    borderColor: highlighted ? '#ffd35b' : 'rgba(255,255,255,0.65)',
-                    borderRadius: 5,
-                    backgroundColor: highlighted ? '#ffd35b' : '#102765',
+                    borderColor: highlighted ? '#c9dbff' : ACCENT_LINE,
+                    borderRadius: 10,
+                    backgroundColor: highlighted ? ACCENT : NAVY_RAISED,
                     alignItems: 'center',
                     justifyContent: 'center',
                     opacity: pressed ? 0.85 : 1,
                   })}
                 >
                   <Text style={{
-                    color: highlighted ? '#171717' : '#fff',
+                    color: highlighted ? NAVY : '#fff',
                     fontFamily: 'Georgia',
                     fontSize: 14,
                     fontWeight: '700',
                   }}>
                     {label}
                   </Text>
-                </Pressable>
+                </AnimatedPressable>
               ))}
             </View>
           </View>
         )}
 
         {results && (
-          <View style={{
-            position: 'absolute',
-            zIndex: 23,
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 24,
-            backgroundColor: 'rgba(0,0,0,0.76)',
-          }}>
-            <View style={{
-              width: Math.min(340, width - 48),
-              padding: 24,
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.4)',
-              borderRadius: 10,
-              backgroundColor: '#091849',
-              alignItems: 'stretch',
-            }}>
-              <Text style={{ color: '#fff', fontFamily: 'Georgia', fontSize: 26, fontWeight: '700', textAlign: 'center' }}>
-                Song Complete
-              </Text>
-              <Text style={{ color: '#fff', textAlign: 'center', marginTop: 6 }}>{results.title}</Text>
-              <Text style={{ color: '#ffd35b', textAlign: 'center', fontSize: 30, fontWeight: '700', marginVertical: 12 }}>
-                {results.score} points
-              </Text>
-              <Text style={{ color: '#fff', lineHeight: 23 }}>Difficulty: {DIFFICULTY_LABELS[results.difficulty]}</Text>
-              <Text style={{ color: '#fff', lineHeight: 23 }}>Accuracy: {accuracy}%</Text>
-              <Text style={{ color: '#fff', lineHeight: 23 }}>Max combo: {maxCombo}</Text>
-              <Text style={{ color: '#fff', lineHeight: 23 }}>
-                Great {judgementStats.great} · OK {judgementStats.ok} · Meh {judgementStats.meh} · Miss {judgementStats.miss}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={restart}
-                style={{ minHeight: 44, marginTop: 16, borderRadius: 6, backgroundColor: '#ffd35b', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Text style={{ color: '#171717', fontWeight: '700' }}>Retry</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => onNavigate('minigame')}
-                style={{ minHeight: 44, marginTop: 8, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.65)', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Return to menu</Text>
-              </Pressable>
-            </View>
-          </View>
+          <ResultsOverlay
+            results={results}
+            accuracy={accuracy}
+            maxCombo={maxCombo}
+            stats={judgementStats}
+            width={width}
+            onRetry={restart}
+            onMenu={() => onNavigate('minigame')}
+          />
         )}
 
       {savePromptResult && (
@@ -703,6 +1231,7 @@ function PianoMan({ onNavigate }) {
       )}
       </View>
     </Page>
+    </ButtonSoundContext.Provider>
   );
 }
 

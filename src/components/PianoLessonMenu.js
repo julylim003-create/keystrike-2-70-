@@ -1,0 +1,207 @@
+
+import React, { useRef, useState } from 'react';
+import { Animated, Easing, Pressable, Text, View } from 'react-native';
+
+const LESSONS = [
+  { title: 'Treble Clef', description: 'Practice reading notes on the treble staff.', mode: 'Treble', symbol: '𝄞', subtitle: 'TREBLE STAFF' },
+  { title: 'Bass Clef', description: 'Practice reading notes on the bass staff.', mode: 'Bass', symbol: '𝄢', subtitle: 'BASS STAFF' },
+  { title: 'Chords', description: 'Practice identifying musical chords.', mode: 'Chords', symbol: '♫', subtitle: 'CHORD RECOGNITION' },
+];
+
+export default function PianoLessonMenu({ onSelectLesson }) {
+  const [selectedMode, setSelectedMode] = useState(null);
+  const [transitioning, setTransitioning] = useState(false);
+  const menuOpacity = useRef(new Animated.Value(1)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const cardScales = useRef(LESSONS.map(() => new Animated.Value(1))).current;
+  const ringScales = useRef(LESSONS.map(() => new Animated.Value(0.5))).current;
+  const ringOpacities = useRef(LESSONS.map(() => new Animated.Value(0))).current;
+  const titleTranslateY = useRef(new Animated.Value(0)).current;
+
+  const selectLesson = (lesson, index) => {
+    if (transitioning) return;
+
+    setTransitioning(true);
+    setSelectedMode(lesson.mode);
+
+    Animated.parallel([
+      Animated.timing(menuOpacity, {
+        toValue: 0,
+        duration: 500,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 1,
+        duration: 520,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.spring(cardScales[index], {
+          toValue: 1.12,
+          speed: 20,
+          bounciness: 7,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardScales[index], {
+          toValue: 1.65,
+          duration: 360,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.sequence([
+        Animated.timing(ringOpacities[index], {
+          toValue: 0.9,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+        Animated.parallel([
+          Animated.timing(ringScales[index], {
+            toValue: 3.5,
+            duration: 450,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(ringOpacities[index], {
+            toValue: 0,
+            duration: 450,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+      Animated.timing(titleTranslateY, {
+        toValue: -10,
+        duration: 350,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) onSelectLesson(lesson.mode);
+    });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: 'rgba(8,8,18,0.82)', paddingHorizontal: 22, paddingVertical: 28, justifyContent: 'center', overflow: 'hidden' }}>
+      <Animated.View style={{ opacity: menuOpacity, flex: 1, justifyContent: 'center' }}>
+        <Animated.View style={{ alignItems: 'center', marginBottom: 32, transform: [{ translateY: titleTranslateY }] }}>
+          <View style={{ width: 68, height: 3, backgroundColor: '#D4AF37', borderRadius: 3, marginBottom: 18 }} />
+          <Text style={{ color: '#D4AF37', fontSize: 32, fontWeight: '900', textAlign: 'center', letterSpacing: 1.5 }}>
+            PIANO LESSONS
+          </Text>
+          <Text style={{ color: '#E0E0E0', fontSize: 14, textAlign: 'center', marginTop: 10, letterSpacing: 1 }}>
+            CHOOSE YOUR NEXT CHALLENGE
+          </Text>
+          <Text style={{ color: '#888888', fontSize: 12, textAlign: 'center', marginTop: 7 }}>
+            Read the notes. Find your rhythm.
+          </Text>
+        </Animated.View>
+
+        <View style={{ gap: 15 }}>
+          {LESSONS.map((lesson, index) => {
+            const isSelected = selectedMode === lesson.mode;
+
+            return (
+              <Animated.View
+                key={lesson.mode}
+                style={{
+                  position: 'relative',
+                  zIndex: isSelected ? 5 : 1,
+                  transform: [{ scale: cardScales[index] }],
+                  opacity: selectedMode && !isSelected ? 0.35 : 1,
+                }}
+              >
+                <Animated.View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    borderWidth: 2,
+                    borderColor: '#F7D96B',
+                    borderRadius: 16,
+                    opacity: ringOpacities[index],
+                    transform: [{ scale: ringScales[index] }],
+                  }}
+                />
+
+                <Pressable
+                  disabled={transitioning}
+                  onPress={() => selectLesson(lesson, index)}
+                  style={({ pressed }) => ({
+                    minHeight: 105,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingVertical: 17,
+                    paddingHorizontal: 17,
+                    borderRadius: 16,
+                    backgroundColor: isSelected ? '#39300F' : pressed ? '#302A17' : 'rgba(25,25,30,0.96)',
+                    borderWidth: 1.5,
+                    borderColor: isSelected ? '#F7D96B' : pressed ? '#F7D96B' : '#66551D',
+                    shadowColor: '#D4AF37',
+                    shadowOpacity: isSelected ? 0.75 : 0.16,
+                    shadowRadius: isSelected ? 24 : 8,
+                    shadowOffset: { width: 0, height: 0 },
+                    elevation: isSelected ? 12 : 3,
+                  })}
+                >
+                  <View style={{
+                    width: 62,
+                    height: 62,
+                    borderRadius: 14,
+                    backgroundColor: isSelected ? '#D4AF37' : '#302A17',
+                    borderWidth: 1,
+                    borderColor: '#9C812B',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginRight: 16,
+                  }}>
+                    <Text style={{ color: isSelected ? '#020000' : '#e7b80f', fontSize: 35, fontWeight: '600' }}>
+                      {lesson.symbol}
+                    </Text>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#D4AF37', fontSize: 10, fontWeight: '900', letterSpacing: 1.8, marginBottom: 5 }}>
+                      {lesson.subtitle}
+                    </Text>
+                    <Text style={{ color: '#FFFFFF', fontSize: 19, fontWeight: '800', marginBottom: 5 }}>
+                      {lesson.title}
+                    </Text>
+                    <Text style={{ color: '#BDBDBD', fontSize: 12, lineHeight: 18 }}>
+                      {lesson.description}
+                    </Text>
+                  </View>
+
+                  <Text style={{ color: '#D4AF37', fontSize: 25, fontWeight: '300', marginLeft: 8 }}>
+                    ›
+                  </Text>
+                </Pressable>
+              </Animated.View>
+            );
+          })}
+        </View>
+
+        <Text style={{ color: '#777777', fontSize: 10, textAlign: 'center', marginTop: 28, letterSpacing: 2 }}>
+          FOCUS • TIMING • PRECISION
+        </Text>
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: '#08080D',
+          opacity: overlayOpacity,
+        }}
+      />
+    </View>
+  );
+}
